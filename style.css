@@ -193,3 +193,39 @@ button.secondary {
   border: 1px solid rgba(212, 177, 95, 0.18);
   background: rgba(0,0,0,0.2);
 }
+
+/* --- Card stat pips (Phageborn-ish) --- */
+.card { position: relative; }
+
+.pip {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 950;
+  font-size: 14px;
+  color: #0b0710;
+  border: 2px solid rgba(0,0,0,0.45);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+  user-select: none;
+}
+
+.pip-atk {
+  left: 8px;
+  bottom: 8px;
+  background: radial-gradient(circle at 30% 30%, #ffb3a6 0%, #ff3b30 55%, #9b1010 100%);
+}
+
+.pip-arm {
+  right: 8px;
+  bottom: 8px;
+  background: radial-gradient(circle at 30% 30%, #b9f7c9 0%, #39d353 55%, #0a6b2a 100%);
+}
+
+.pip-life {
+  right: 8px;
+  top: 8px;
+  background: radial-gradient(circle at 30% 30%, #e7c6ff 0%, #a855f7 55%, #4c1d95 100%);
+}

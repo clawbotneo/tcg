@@ -18,6 +18,17 @@ function sumCost(cost) {
 
 function deepCopy(x) { return JSON.parse(JSON.stringify(x)); }
 
+function applyDamageToUnit(u, dmg) {
+  const a = u.currentArmour ?? (u.armour ?? 0);
+  const block = Math.min(a, dmg);
+  u.currentArmour = a - block;
+  u.currentHp -= (dmg - block);
+}
+
+function unitEffectiveHp(u) {
+  return (u.currentHp ?? u.hp) + (u.currentArmour ?? (u.armour ?? 0));
+}
+
 function makePlayer(name) {
   const deck = shuffle(Array.from({ length: 20 }, (_, i) => cloneCard(STARTER_DECK[i % STARTER_DECK.length])));
   return {
@@ -161,6 +172,7 @@ function playCard(owner, handIdx) {
   p.board.push({
     ...card,
     currentHp: card.hp,
+    currentArmour: card.armour ?? 0,
     summoningSick: true,
     exhausted: true,
   });
@@ -190,9 +202,9 @@ function attackUnit(defOwner, defIdx) {
   const D = state[defOwner].board[defIdx];
   if (!A || !D) return;
 
-  // exchange damage
-  D.currentHp -= A.atk;
-  A.currentHp -= D.atk;
+  // exchange damage (armour absorbs first)
+  applyDamageToUnit(D, A.atk);
+  applyDamageToUnit(A, D.atk);
   A.exhausted = true;
   state.selectedAttacker = null;
 
@@ -291,8 +303,8 @@ function enemyMainAndCombat() {
     if (target >= 0) {
       // simulate attack
       const D = player.board[target];
-      D.currentHp -= u.atk;
-      u.currentHp -= D.atk;
+      applyDamageToUnit(D, u.atk);
+      applyDamageToUnit(u, D.atk);
       u.exhausted = true;
       log(`Enemy's ${u.name} trades into your ${D.name}.`);
       cleanupDead();
@@ -344,11 +356,27 @@ function renderCard(card, opts) {
   meta.innerHTML = `<span>Cost: ${formatCost(card.cost)}</span><span>${card.tribe ? card.tribe : opts.ownerLabel}</span>`;
   div.appendChild(meta);
 
-  const stats = document.createElement('div');
-  stats.className = 'stats';
-  const hp = (card.currentHp ?? card.hp);
-  stats.innerHTML = `<span>ATK ${card.atk}</span><span>HP ${hp}</span>`;
-  div.appendChild(stats);
+  // corner stats (Phageborn-ish): ATK bottom-left, ARM bottom-right, LIFE top-right
+  const life = (card.currentHp ?? card.hp);
+  const armour = (card.currentArmour ?? (card.armour ?? 0));
+
+  const lifePip = document.createElement('div');
+  lifePip.className = 'pip pip-life';
+  lifePip.textContent = String(life);
+  div.appendChild(lifePip);
+
+  const atkPip = document.createElement('div');
+  atkPip.className = 'pip pip-atk';
+  atkPip.textContent = String(card.atk);
+  div.appendChild(atkPip);
+
+  if (armour > 0) {
+    const armPip = document.createElement('div');
+    armPip.className = 'pip pip-arm';
+    armPip.textContent = String(armour);
+    div.appendChild(armPip);
+  }
+
 
   if (card.text) {
     const t = document.createElement('div');
