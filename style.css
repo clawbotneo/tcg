@@ -229,3 +229,9 @@ button.secondary {
   top: 8px;
   background: radial-gradient(circle at 30% 30%, #e7c6ff 0%, #a855f7 55%, #4c1d95 100%);
 }
+
+.pip-shield {
+  left: 8px;
+  top: 8px;
+  background: radial-gradient(circle at 30% 30%, #c6f6ff 0%, #22d3ee 55%, #0e7490 100%);
+}

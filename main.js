@@ -19,10 +19,18 @@ function sumCost(cost) {
 function deepCopy(x) { return JSON.parse(JSON.stringify(x)); }
 
 function applyDamageToUnit(u, dmg) {
+  // Shield absorbs first (wizard barrier). Armour absorbs next (knight plating).
+  const sh = u.currentShield ?? (u.shield ?? 0);
+  const shBlock = Math.min(sh, dmg);
+  u.currentShield = sh - shBlock;
+  dmg -= shBlock;
+
   const a = u.currentArmour ?? (u.armour ?? 0);
-  const block = Math.min(a, dmg);
-  u.currentArmour = a - block;
-  u.currentHp -= (dmg - block);
+  const armBlock = Math.min(a, dmg);
+  u.currentArmour = a - armBlock;
+  dmg -= armBlock;
+
+  u.currentHp -= dmg;
 }
 
 function unitEffectiveHp(u) {
@@ -122,6 +130,8 @@ function beginTurn(who) {
   for (const u of p.board) {
     if (u.summoningSick) u.summoningSick = false;
     u.exhausted = false;
+    // reset shields at start of owner's turn
+    u.currentShield = u.shield ?? 0;
   }
 
   log(`${p.name} turn ${state.turnN} (${color}+1 mana).`);
@@ -173,6 +183,7 @@ function playCard(owner, handIdx) {
     ...card,
     currentHp: card.hp,
     currentArmour: card.armour ?? 0,
+    currentShield: card.shield ?? 0,
     summoningSick: true,
     exhausted: true,
   });
@@ -357,8 +368,10 @@ function renderCard(card, opts) {
   div.appendChild(meta);
 
   // corner stats (Phageborn-ish): ATK bottom-left, ARM bottom-right, LIFE top-right
+  // plus SHIELD top-left (wizard barrier)
   const life = (card.currentHp ?? card.hp);
   const armour = (card.currentArmour ?? (card.armour ?? 0));
+  const shield = (card.currentShield ?? (card.shield ?? 0));
 
   const lifePip = document.createElement('div');
   lifePip.className = 'pip pip-life';
@@ -375,6 +388,13 @@ function renderCard(card, opts) {
     armPip.className = 'pip pip-arm';
     armPip.textContent = String(armour);
     div.appendChild(armPip);
+  }
+
+  if (shield > 0) {
+    const shPip = document.createElement('div');
+    shPip.className = 'pip pip-shield';
+    shPip.textContent = String(shield);
+    div.appendChild(shPip);
   }
 
 
