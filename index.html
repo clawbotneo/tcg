@@ -22,7 +22,8 @@
         <div class="hud-block">
           <div><strong>Turn:</strong> <span id="turn"></span></div>
           <div><strong>Phase:</strong> <span id="phase"></span></div>
-          <button id="endTurnBtn">End turn</button>
+          <button id="actionBtn">Next phase</button>
+          <button id="endTurnBtn" class="secondary">End turn</button>
           <button id="restartBtn" class="secondary">Restart</button>
         </div>
       </div>
@@ -46,7 +47,7 @@
             <ul>
               <li>Play a card from your hand (if you can afford it).</li>
               <li>Units have <em>summoning sickness</em>: they can't attack the turn they're played.</li>
-              <li>To attack: click one of your ready units, then click an enemy unit or the enemy hero.</li>
+              <li>Combat is phased: declare attackers, (defender declares blocks), then resolve.</li>
             </ul>
           </div>
         </div>

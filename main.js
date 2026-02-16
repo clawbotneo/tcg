@@ -64,6 +64,7 @@ const el = {
   playerBoard: document.getElementById('playerBoard'),
   enemyBoard: document.getElementById('enemyBoard'),
   log: document.getElementById('log'),
+  actionBtn: document.getElementById('actionBtn'),
   endTurnBtn: document.getElementById('endTurnBtn'),
   restartBtn: document.getElementById('restartBtn'),
   enemyHero: document.getElementById('enemyHero'),
@@ -71,6 +72,14 @@ const el = {
   enemyHeroHp: document.getElementById('enemyHeroHp'),
   playerHeroHp: document.getElementById('playerHeroHp'),
 };
+
+function phaseLabel() {
+  if (state.phase === 'main') return 'MAIN';
+  if (state.phase === 'combat-declare') return 'COMBAT: DECLARE';
+  if (state.phase === 'combat-block') return 'COMBAT: BLOCK';
+  if (state.phase === 'combat-resolve') return 'COMBAT: RESOLVE';
+  return String(state.phase || '').toUpperCase();
+}
 
 function log(msg) {
   const line = document.createElement('div');
@@ -102,7 +111,8 @@ function startGame() {
     phase: 'main',
     player: makePlayer('You'),
     enemy: makePlayer('Enemy'),
-    selectedAttacker: null, // { owner: 'player'|'enemy', idx }
+    selectedAttacker: null, // legacy (used for block UI selection)
+    combat: null, // { attackers: [{owner, idx}], blocks: { [atkOwner:atkIdx]: {owner, idx} } }
   };
 
   // opening hands
@@ -116,6 +126,7 @@ function startGame() {
 function beginTurn(who) {
   state.current = who;
   state.phase = 'main';
+  state.combat = null;
   const p = state[who];
 
   // increment max mana: rotate colors each turn for predictability
@@ -136,15 +147,32 @@ function beginTurn(who) {
 
   log(`${p.name} turn ${state.turnN} (${color}+1 mana).`);
 
-  // enemy auto-plays
+  // enemy plays cards, then attacks; you block.
   if (who === 'enemy') {
-    enemyMainAndCombat();
+    enemyMain();
+    state.phase = 'combat-declare';
+    state.combat = { attackers: [], blocks: {} };
+    enemyDeclareAttackers();
+
+    if (!state.combat.attackers.length) {
+      log('Enemy has no attackers.');
+      state.phase = 'main';
+      state.combat = null;
+      endTurn();
+      return;
+    }
+
+    state.phase = 'combat-block';
+    log('Enemy attacks. Select an attacker, then click one of your units to block.');
+    render();
   }
 }
 
 function endTurn() {
   if (isGameOver()) return;
   state.selectedAttacker = null;
+  state.combat = null;
+  state.phase = 'main';
 
   if (state.current === 'player') {
     state.current = 'enemy';
@@ -193,17 +221,11 @@ function playCard(owner, handIdx) {
 }
 
 function selectAttacker(owner, boardIdx) {
-  if (owner !== state.current) return;
-  if (owner !== 'player') return; // v1: only allow human targeting
-
-  const p = state[owner];
-  const u = p.board[boardIdx];
-  if (!u) return;
-  if (u.summoningSick) return;
-  if (u.exhausted) return;
-
-  state.selectedAttacker = { owner, idx: boardIdx };
-  render();
+  // combat-v2: during COMBAT: DECLARE this toggles attackers
+  if (state.phase === 'combat-declare') {
+    toggleAttacker(owner, boardIdx);
+    return;
+  }
 }
 
 function attackUnit(defOwner, defIdx) {
@@ -252,7 +274,88 @@ function cleanupDead() {
   }
 }
 
-function enemyMainAndCombat() {
+function ensureCombat() {
+  if (!state.combat) state.combat = { attackers: [], blocks: {} };
+}
+
+function combatKey(attacker) {
+  return attacker.owner + ':' + attacker.idx;
+}
+
+function toggleAttacker(owner, boardIdx) {
+  if (owner !== state.current) return;
+  if (state.phase !== 'combat-declare') return;
+
+  const p = state[owner];
+  const u = p.board[boardIdx];
+  if (!u) return;
+  if (u.summoningSick || u.exhausted) return;
+
+  ensureCombat();
+  const i = state.combat.attackers.findIndex(a => a.owner === owner && a.idx === boardIdx);
+  if (i >= 0) state.combat.attackers.splice(i, 1);
+  else state.combat.attackers.push({ owner, idx: boardIdx });
+
+  render();
+}
+
+function setBlock(defOwner, defIdx, atkOwner, atkIdx) {
+  if (state.phase !== 'combat-block') return;
+
+  const def = state[defOwner];
+  const blocker = def.board[defIdx];
+  if (!blocker) return;
+  if (blocker.summoningSick || blocker.exhausted) return;
+
+  ensureCombat();
+  const key = atkOwner + ':' + atkIdx;
+  state.combat.blocks[key] = { owner: defOwner, idx: defIdx };
+  render();
+}
+
+function resolveCombat() {
+  if (state.phase !== 'combat-resolve') return;
+  ensureCombat();
+
+  for (const atk of state.combat.attackers) {
+    const A = state[atk.owner].board[atk.idx];
+    if (!A || A.currentHp <= 0) continue;
+
+    const key = combatKey(atk);
+    const blkRef = state.combat.blocks[key];
+
+    if (blkRef) {
+      const D = state[blkRef.owner].board[blkRef.idx];
+      if (D && D.currentHp > 0) {
+        applyDamageToUnit(D, A.atk);
+        applyDamageToUnit(A, D.atk);
+        log(`${state[atk.owner].name}'s ${A.name} fights ${state[blkRef.owner].name}'s ${D.name}.`);
+      }
+    } else {
+      const defOwner = atk.owner === 'player' ? 'enemy' : 'player';
+      state[defOwner].hp -= A.atk;
+      log(`${state[atk.owner].name}'s ${A.name} hits ${state[defOwner].name} for ${A.atk}.`);
+    }
+
+    A.exhausted = true;
+  }
+
+  cleanupDead();
+  state.combat = null;
+  state.phase = 'main';
+  render();
+  isGameOver();
+}
+
+function enemyDeclareAttackers() {
+  ensureCombat();
+  const enemy = state.enemy;
+  const ready = enemy.board.map((u, idx) => ({ u, idx }))
+    .filter(x => !x.u.summoningSick && !x.u.exhausted && x.u.currentHp > 0);
+  state.combat.attackers = ready.map(x => ({ owner: 'enemy', idx: x.idx }));
+}
+
+function enemyMain() {
   const enemy = state.enemy;
 
   // main: play best affordable cards until can't
@@ -275,62 +378,6 @@ function enemyMainAndCombat() {
       played = true;
     }
   }
-
-  // combat: very simple
-  // If can lethal face, do it. Else, trade into enemy units if favorable, otherwise face.
-  const player = state.player;
-
-  function readyUnits() {
-    return enemy.board.map((u, idx) => ({ u, idx }))
-      .filter(x => !x.u.summoningSick && !x.u.exhausted && x.u.currentHp > 0);
-  }
-
-  // lethal check
-  const dmg = readyUnits().reduce((s, x) => s + x.u.atk, 0);
-  if (dmg >= player.hp) {
-    for (const { idx } of readyUnits()) {
-      // direct attack
-      player.hp -= enemy.board[idx].atk;
-      enemy.board[idx].exhausted = true;
-    }
-    log('Enemy goes face for lethal.');
-    render();
-    isGameOver();
-    endTurn();
-    return;
-  }
-
-  // trades
-  for (const { u, idx } of readyUnits()) {
-    // find a favorable trade target: enemy unit that dies and we survive
-    let target = -1;
-    for (let j = 0; j < player.board.length; j++) {
-      const d = player.board[j];
-      const dDies = d.currentHp <= u.atk;
-      const aSurvives = u.currentHp > d.atk;
-      if (dDies && aSurvives) { target = j; break; }
-    }
-
-    if (target >= 0) {
-      // simulate attack
-      const D = player.board[target];
-      applyDamageToUnit(D, u.atk);
-      applyDamageToUnit(u, D.atk);
-      u.exhausted = true;
-      log(`Enemy's ${u.name} trades into your ${D.name}.`);
-      cleanupDead();
-      continue;
-    }
-
-    // else face
-    player.hp -= u.atk;
-    u.exhausted = true;
-    log(`Enemy's ${u.name} hits you for ${u.atk}.`);
-  }
-
-  render();
-  isGameOver();
-  endTurn();
 }
 
 // --- Render ---
@@ -422,7 +469,14 @@ function render() {
   el.enemyMana.textContent = `${manaString(e.mana)} (max ${manaString(e.maxMana)})`;
 
   el.turn.textContent = state.turnN;
-  el.phase.textContent = `${state.current.toUpperCase()} / ${state.phase}`;
+  el.phase.textContent = `${state.current.toUpperCase()} / ${phaseLabel()}`;
+
+  // action button label
+  if (state.phase === 'main') el.actionBtn.textContent = 'Combat';
+  else if (state.phase === 'combat-declare') el.actionBtn.textContent = 'Confirm attackers';
+  else if (state.phase === 'combat-block') el.actionBtn.textContent = 'Resolve blocks';
+  else if (state.phase === 'combat-resolve') el.actionBtn.textContent = 'Resolve';
+  else el.actionBtn.textContent = 'Next phase';
 
   // hand
   el.hand.innerHTML = '';
@@ -438,9 +492,17 @@ function render() {
   p.board.forEach((u, idx) => {
     const badgeText = u.summoningSick ? 'Sick' : (u.exhausted ? 'Used' : 'Ready');
     const badgeKind = u.summoningSick ? 'sick' : (!u.exhausted ? 'ready' : '');
-    const selected = state.selectedAttacker?.owner === 'player' && state.selectedAttacker?.idx === idx;
+    const attackerSelected = state.phase === 'combat-declare' && state.current === 'player' && state.combat?.attackers?.some(a => a.owner === 'player' && a.idx === idx);
+    const selected = attackerSelected;
     const div = renderCard(u, { disabled: false, ownerLabel: 'Board', badgeText, badgeKind, selected });
-    div.addEventListener('click', () => selectAttacker('player', idx));
+    div.addEventListener('click', () => {
+      if (state.phase === 'combat-block' && state.current === 'enemy') {
+        const atk = state.selectedAttacker;
+        if (atk) setBlock('player', idx, atk.owner, atk.idx);
+        return;
+      }
+      selectAttacker('player', idx);
+    });
     el.playerBoard.appendChild(div);
   });
 
@@ -448,16 +510,73 @@ function render() {
   e.board.forEach((u, idx) => {
     const badgeText = u.summoningSick ? 'Sick' : (u.exhausted ? 'Used' : 'Ready');
     const badgeKind = u.summoningSick ? 'sick' : (!u.exhausted ? 'ready' : '');
-    const div = renderCard(u, { disabled: false, ownerLabel: 'Board', badgeText, badgeKind });
-    div.addEventListener('click', () => attackUnit('enemy', idx));
+    const selected = state.phase === 'combat-block' && state.current === 'enemy' && state.selectedAttacker?.owner === 'enemy' && state.selectedAttacker?.idx === idx;
+    const div = renderCard(u, { disabled: false, ownerLabel: 'Board', badgeText, badgeKind, selected });
+    div.addEventListener('click', () => {
+      if (state.phase === 'combat-block' && state.current === 'enemy') {
+        state.selectedAttacker = { owner: 'enemy', idx };
+        render();
+      }
+    });
     el.enemyBoard.appendChild(div);
   });
 
   el.endTurnBtn.disabled = isGameOver();
 }
 
-// Attack enemy hero by clicking it
-el.enemyHero.addEventListener('click', () => attackHero('enemy'));
+function nextPhase() {
+  if (isGameOver()) return;
+
+  if (state.phase === 'main') {
+    state.phase = 'combat-declare';
+    state.combat = { attackers: [], blocks: {} };
+    log(`${state[state.current].name} enters combat.`);
+    render();
+    return;
+  }
+
+  if (state.phase === 'combat-declare') {
+    if (!state.combat || state.combat.attackers.length === 0) {
+      log('No attackers declared.');
+      state.phase = 'main';
+      state.combat = null;
+      render();
+      return;
+    }
+
+    if (state.current === 'player') {
+      // enemy auto-blocks: 1 blocker per attacker if available
+      const enemy = state.enemy;
+      const blockers = enemy.board.map((u, idx) => ({ u, idx }))
+        .filter(x => !x.u.summoningSick && !x.u.exhausted && x.u.currentHp > 0);
+
+      for (const atk of state.combat.attackers) {
+        if (blockers.length === 0) break;
+        const chosen = blockers.shift();
+        state.combat.blocks[atk.owner + ':' + atk.idx] = { owner: 'enemy', idx: chosen.idx };
+      }
+
+      state.phase = 'combat-resolve';
+      render();
+      nextPhase();
+      return;
+    }
+  }
+
+  if (state.phase === 'combat-block') {
+    state.phase = 'combat-resolve';
+    render();
+    nextPhase();
+    return;
+  }
+
+  if (state.phase === 'combat-resolve') {
+    resolveCombat();
+    return;
+  }
+}
+
+el.actionBtn.addEventListener('click', () => nextPhase());
 
 el.endTurnBtn.addEventListener('click', () => endTurn());
 el.restartBtn.addEventListener('click', () => {
