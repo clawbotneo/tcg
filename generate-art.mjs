@@ -16,7 +16,9 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const MODEL = process.env.IMAGE_MODEL || 'gpt-image-1';
+// DALL·E-style models typically expose urls; gpt-image-1 may vary by account.
+// Default to dall-e-3 since you asked for DALL·E.
+const MODEL = process.env.IMAGE_MODEL || 'dall-e-3';
 const SIZE = process.env.IMAGE_SIZE || '1024x1024';
 
 const cardsMod = await import(path.resolve('./cards.js'));
@@ -39,8 +41,6 @@ async function genOne(card) {
     model: MODEL,
     prompt: card.artPrompt,
     size: SIZE,
-    // Prefer base64 so we don't deal with temporary URLs
-    response_format: 'b64_json',
   };
 
   const res = await fetch('https://api.openai.com/v1/images/generations', {
@@ -58,11 +58,27 @@ async function genOne(card) {
   }
 
   const json = await res.json();
-  const b64 = json?.data?.[0]?.b64_json;
-  if (!b64) throw new Error('No b64_json in response');
 
-  fs.writeFileSync(outPath, Buffer.from(b64, 'base64'));
-  console.log('wrote', outPath);
+  // API may return either a temporary URL or base64.
+  const b64 = json?.data?.[0]?.b64_json;
+  const url = json?.data?.[0]?.url;
+
+  if (b64) {
+    fs.writeFileSync(outPath, Buffer.from(b64, 'base64'));
+    console.log('wrote', outPath);
+    return;
+  }
+
+  if (url) {
+    const imgRes = await fetch(url);
+    if (!imgRes.ok) throw new Error(`Failed to download image: HTTP ${imgRes.status}`);
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    fs.writeFileSync(outPath, buf);
+    console.log('wrote', outPath);
+    return;
+  }
+
+  throw new Error('No url or b64_json in response');
 }
 
 for (const card of deck) {
