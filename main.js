@@ -325,6 +325,15 @@ function renderCard(card, opts) {
   if (opts.badgeKind) badge.classList.add(opts.badgeKind);
   div.appendChild(badge);
 
+  if (card.art) {
+    const img = document.createElement('img');
+    img.className = 'card-art';
+    img.src = card.art;
+    img.alt = card.name + ' art';
+    img.loading = 'lazy';
+    div.appendChild(img);
+  }
+
   const name = document.createElement('div');
   name.className = 'name';
   name.textContent = card.name;
