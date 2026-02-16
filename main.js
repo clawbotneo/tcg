@@ -91,7 +91,7 @@ function startGame() {
 
   beginTurn('player');
   render();
-  log('Game start.');
+  log('Game start. The arena awakens.');
 }
 
 function beginTurn(who) {
@@ -332,7 +332,7 @@ function renderCard(card, opts) {
 
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.innerHTML = `<span>Cost: ${formatCost(card.cost)}</span><span>${opts.ownerLabel}</span>`;
+  meta.innerHTML = `<span>Cost: ${formatCost(card.cost)}</span><span>${card.tribe ? card.tribe : opts.ownerLabel}</span>`;
   div.appendChild(meta);
 
   const stats = document.createElement('div');
