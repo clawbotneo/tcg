@@ -454,6 +454,13 @@ function enemyMain() {
 
 // --- Render ---
 
+const KEYWORD_HELP = {
+  Guard: 'Guard: must be blocked if able (enemy can\'t slip past while a ready guard can block).',
+  Haste: 'Haste: this unit can attack the turn it\'s played (no summoning sickness).',
+  Flying: 'Flying: can only be blocked by other Flying units.',
+  Lifesteal: 'Lifesteal: damage dealt heals your hero by the same amount.',
+};
+
 function renderCard(card, opts) {
   const div = document.createElement('div');
   div.className = 'card';
@@ -490,7 +497,16 @@ function renderCard(card, opts) {
   if (keywords.length) {
     const k = document.createElement('div');
     k.className = 'keywords';
-    k.textContent = keywords.join(' · ');
+
+    // Render each keyword as a hoverable chip with a tooltip.
+    for (const kw of keywords) {
+      const chip = document.createElement('span');
+      chip.className = 'kw';
+      chip.textContent = kw;
+      chip.title = KEYWORD_HELP[kw] || kw;
+      k.appendChild(chip);
+    }
+
     div.appendChild(k);
   }
 
