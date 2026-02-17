@@ -19,6 +19,9 @@ function sumCost(cost) {
 function deepCopy(x) { return JSON.parse(JSON.stringify(x)); }
 
 function applyDamageToUnit(u, dmg) {
+  // Returns damage that actually hit LIFE (HP) after Shield/Armour.
+  const startHp = u.currentHp;
+
   // Shield absorbs first (wizard barrier). Armour absorbs next (knight plating).
   const sh = u.currentShield ?? (u.shield ?? 0);
   const shBlock = Math.min(sh, dmg);
@@ -31,6 +34,14 @@ function applyDamageToUnit(u, dmg) {
   dmg -= armBlock;
 
   u.currentHp -= dmg;
+
+  return Math.max(0, startHp - u.currentHp);
+}
+
+function applyDamageToHero(owner, dmg) {
+  const start = state[owner].hp;
+  state[owner].hp -= dmg;
+  return Math.max(0, start - state[owner].hp);
 }
 
 function unitEffectiveHp(u) {
@@ -207,12 +218,14 @@ function playCard(owner, handIdx) {
   p.mana = pay(card.cost, p.mana);
   p.hand.splice(handIdx, 1);
 
+  const hasHaste = (card.keywords || []).includes('Haste');
+
   p.board.push({
     ...card,
     currentHp: card.hp,
     currentArmour: card.armour ?? 0,
     currentShield: card.shield ?? 0,
-    summoningSick: true,
+    summoningSick: !hasHaste,
     exhausted: true,
   });
 
@@ -308,6 +321,17 @@ function setBlock(defOwner, defIdx, atkOwner, atkIdx) {
   if (blocker.summoningSick || blocker.exhausted) return;
 
   ensureCombat();
+  const A = state[atkOwner].board[atkIdx];
+  if (!A) return;
+
+  // Flying: can only be blocked by Flying.
+  const aFly = (A.keywords || []).includes('Flying');
+  const bFly = (blocker.keywords || []).includes('Flying');
+  if (aFly && !bFly) {
+    log('Only Flying units can block Flying attackers.');
+    return;
+  }
+
   const key = atkOwner + ':' + atkIdx;
   state.combat.blocks[key] = { owner: defOwner, idx: defIdx };
   render();
@@ -323,18 +347,45 @@ function resolveCombat() {
 
     const key = combatKey(atk);
     const blkRef = state.combat.blocks[key];
+    const aKeywords = A.keywords || [];
+    const aLifesteal = aKeywords.includes('Lifesteal');
 
     if (blkRef) {
       const D = state[blkRef.owner].board[blkRef.idx];
       if (D && D.currentHp > 0) {
-        applyDamageToUnit(D, A.atk);
+        const dealtToDef = applyDamageToUnit(D, A.atk);
         applyDamageToUnit(A, D.atk);
         log(`${state[atk.owner].name}'s ${A.name} fights ${state[blkRef.owner].name}'s ${D.name}.`);
+
+        if (aLifesteal && dealtToDef > 0) {
+          state[atk.owner].hp += dealtToDef;
+          log(`${state[atk.owner].name} lifesteals ${dealtToDef}.`);
+        }
       }
     } else {
       const defOwner = atk.owner === 'player' ? 'enemy' : 'player';
-      state[defOwner].hp -= A.atk;
-      log(`${state[atk.owner].name}'s ${A.name} hits ${state[defOwner].name} for ${A.atk}.`);
+
+      // Guard: if defender has any Guard units, unblocked attackers can't go face.
+      const guards = state[defOwner].board
+        .map((u, idx) => ({ u, idx }))
+        .filter(x => (x.u.keywords || []).includes('Guard') && x.u.currentHp > 0);
+
+      if (guards.length > 0) {
+        const D = guards[0].u;
+        const dealt = applyDamageToUnit(D, A.atk);
+        log(`${state[atk.owner].name}'s ${A.name} is stopped by Guard (${D.name}).`);
+        if (aLifesteal && dealt > 0) {
+          state[atk.owner].hp += dealt;
+          log(`${state[atk.owner].name} lifesteals ${dealt}.`);
+        }
+      } else {
+        const dealt = applyDamageToHero(defOwner, A.atk);
+        log(`${state[atk.owner].name}'s ${A.name} hits ${state[defOwner].name} for ${dealt}.`);
+        if (aLifesteal && dealt > 0) {
+          state[atk.owner].hp += dealt;
+          log(`${state[atk.owner].name} lifesteals ${dealt}.`);
+        }
+      }
     }
 
     A.exhausted = true;
@@ -413,6 +464,14 @@ function renderCard(card, opts) {
   meta.className = 'meta';
   meta.innerHTML = `<span>Cost: ${formatCost(card.cost)}</span><span>${card.tribe ? card.tribe : opts.ownerLabel}</span>`;
   div.appendChild(meta);
+
+  const keywords = card.keywords || [];
+  if (keywords.length) {
+    const k = document.createElement('div');
+    k.className = 'keywords';
+    k.textContent = keywords.join(' · ');
+    div.appendChild(k);
+  }
 
   // corner stats (Phageborn-ish): ATK bottom-left, ARM bottom-right, LIFE top-right
   // plus SHIELD top-left (wizard barrier)
