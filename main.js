@@ -174,7 +174,7 @@ function beginTurn(who) {
     }
 
     state.phase = 'combat-block';
-    log('Enemy attacks. Select an attacker, then click one of your units to block.');
+    log('Enemy attacks. Click an attacker to select it, then click one of your units to block. Click the same attacker again to unselect. Re-click the same block pair to remove a block.');
     render();
   }
 }
@@ -333,6 +333,23 @@ function setBlock(defOwner, defIdx, atkOwner, atkIdx) {
   }
 
   const key = atkOwner + ':' + atkIdx;
+
+  // Toggle: clicking the same pairing again removes the block.
+  const existing = state.combat.blocks[key];
+  if (existing && existing.owner === defOwner && existing.idx === defIdx) {
+    delete state.combat.blocks[key];
+    render();
+    return;
+  }
+
+  // One blocker can only block one attacker: remove it from any other assignment.
+  for (const k of Object.keys(state.combat.blocks)) {
+    const b = state.combat.blocks[k];
+    if (b && b.owner === defOwner && b.idx === defIdx) {
+      delete state.combat.blocks[k];
+    }
+  }
+
   state.combat.blocks[key] = { owner: defOwner, idx: defIdx };
   render();
 }
@@ -350,12 +367,33 @@ function resolveCombat() {
     const aKeywords = A.keywords || [];
     const aLifesteal = aKeywords.includes('Lifesteal');
 
-    if (blkRef) {
-      const D = state[blkRef.owner].board[blkRef.idx];
+    // Guard rule refinement:
+    // If defender has at least one *ready* Guard that can legally block this attacker,
+    // then the attacker must be blocked (we auto-assign one if you forgot).
+    const defOwner = atk.owner === 'player' ? 'enemy' : 'player';
+
+    const guardBlockers = state[defOwner].board
+      .map((u, idx) => ({ u, idx }))
+      .filter(x => (x.u.keywords || []).includes('Guard') && x.u.currentHp > 0 && !x.u.summoningSick && !x.u.exhausted)
+      .filter(x => {
+        const aFly = (A.keywords || []).includes('Flying');
+        const bFly = (x.u.keywords || []).includes('Flying');
+        return !aFly || bFly;
+      });
+
+    let effectiveBlkRef = blkRef;
+    if (!effectiveBlkRef && guardBlockers.length > 0) {
+      // pick the first ready guard to block
+      effectiveBlkRef = { owner: defOwner, idx: guardBlockers[0].idx };
+      log(`Guard intercepts: ${state[defOwner].board[guardBlockers[0].idx].name} blocks ${A.name}.`);
+    }
+
+    if (effectiveBlkRef) {
+      const D = state[effectiveBlkRef.owner].board[effectiveBlkRef.idx];
       if (D && D.currentHp > 0) {
         const dealtToDef = applyDamageToUnit(D, A.atk);
         applyDamageToUnit(A, D.atk);
-        log(`${state[atk.owner].name}'s ${A.name} fights ${state[blkRef.owner].name}'s ${D.name}.`);
+        log(`${state[atk.owner].name}'s ${A.name} fights ${state[effectiveBlkRef.owner].name}'s ${D.name}.`);
 
         if (aLifesteal && dealtToDef > 0) {
           state[atk.owner].hp += dealtToDef;
@@ -363,28 +401,11 @@ function resolveCombat() {
         }
       }
     } else {
-      const defOwner = atk.owner === 'player' ? 'enemy' : 'player';
-
-      // Guard: if defender has any Guard units, unblocked attackers can't go face.
-      const guards = state[defOwner].board
-        .map((u, idx) => ({ u, idx }))
-        .filter(x => (x.u.keywords || []).includes('Guard') && x.u.currentHp > 0);
-
-      if (guards.length > 0) {
-        const D = guards[0].u;
-        const dealt = applyDamageToUnit(D, A.atk);
-        log(`${state[atk.owner].name}'s ${A.name} is stopped by Guard (${D.name}).`);
-        if (aLifesteal && dealt > 0) {
-          state[atk.owner].hp += dealt;
-          log(`${state[atk.owner].name} lifesteals ${dealt}.`);
-        }
-      } else {
-        const dealt = applyDamageToHero(defOwner, A.atk);
-        log(`${state[atk.owner].name}'s ${A.name} hits ${state[defOwner].name} for ${dealt}.`);
-        if (aLifesteal && dealt > 0) {
-          state[atk.owner].hp += dealt;
-          log(`${state[atk.owner].name} lifesteals ${dealt}.`);
-        }
+      const dealt = applyDamageToHero(defOwner, A.atk);
+      log(`${state[atk.owner].name}'s ${A.name} hits ${state[defOwner].name} for ${dealt}.`);
+      if (aLifesteal && dealt > 0) {
+        state[atk.owner].hp += dealt;
+        log(`${state[atk.owner].name} lifesteals ${dealt}.`);
       }
     }
 
@@ -570,10 +591,14 @@ function render() {
     const badgeText = u.summoningSick ? 'Sick' : (u.exhausted ? 'Used' : 'Ready');
     const badgeKind = u.summoningSick ? 'sick' : (!u.exhausted ? 'ready' : '');
     const selected = state.phase === 'combat-block' && state.current === 'enemy' && state.selectedAttacker?.owner === 'enemy' && state.selectedAttacker?.idx === idx;
-    const div = renderCard(u, { disabled: false, ownerLabel: 'Board', badgeText, badgeKind, selected });
+    const isBlocked = !!state.combat?.blocks?.['enemy:' + idx];
+    const badgeOverride = (state.phase === 'combat-block' && state.current === 'enemy' && isBlocked) ? 'Blocked' : badgeText;
+    const div = renderCard(u, { disabled: false, ownerLabel: 'Board', badgeText: badgeOverride, badgeKind, selected });
     div.addEventListener('click', () => {
       if (state.phase === 'combat-block' && state.current === 'enemy') {
-        state.selectedAttacker = { owner: 'enemy', idx };
+        // toggle selecting this attacker; if already selected, unselect.
+        if (state.selectedAttacker?.owner === 'enemy' && state.selectedAttacker?.idx === idx) state.selectedAttacker = null;
+        else state.selectedAttacker = { owner: 'enemy', idx };
         render();
       }
     });
@@ -604,14 +629,31 @@ function nextPhase() {
     }
 
     if (state.current === 'player') {
-      // enemy auto-blocks: 1 blocker per attacker if available
+      // enemy auto-blocks (better): prioritize Guard blockers, then any legal blocker.
       const enemy = state.enemy;
       const blockers = enemy.board.map((u, idx) => ({ u, idx }))
         .filter(x => !x.u.summoningSick && !x.u.exhausted && x.u.currentHp > 0);
 
+      const guards = blockers.filter(x => (x.u.keywords || []).includes('Guard'));
+      const others = blockers.filter(x => !(x.u.keywords || []).includes('Guard'));
+
+      function pickLegal(attacker, pool) {
+        const A = state.player.board[attacker.idx];
+        if (!A) return -1;
+        const aFly = (A.keywords || []).includes('Flying');
+        for (let i = 0; i < pool.length; i++) {
+          const bFly = (pool[i].u.keywords || []).includes('Flying');
+          if (!aFly || bFly) return i;
+        }
+        return -1;
+      }
+
       for (const atk of state.combat.attackers) {
-        if (blockers.length === 0) break;
-        const chosen = blockers.shift();
+        let i = pickLegal(atk, guards);
+        if (i < 0) i = pickLegal(atk, others);
+        if (i < 0) continue;
+
+        const chosen = (i >= 0 && i < guards.length) ? guards.splice(i, 1)[0] : others.splice(i, 1)[0];
         state.combat.blocks[atk.owner + ':' + atk.idx] = { owner: 'enemy', idx: chosen.idx };
       }
 
