@@ -84,6 +84,37 @@ const el = {
   playerHeroHp: document.getElementById('playerHeroHp'),
 };
 
+const tooltipEl = document.getElementById('tooltip');
+let tooltipPinned = false;
+
+function showTooltip(text, x, y) {
+  if (!tooltipEl) return;
+  tooltipEl.textContent = text;
+  tooltipEl.style.display = 'block';
+  const pad = 12;
+  const w = tooltipEl.offsetWidth || 240;
+  const h = tooltipEl.offsetHeight || 60;
+  const left = Math.min(window.innerWidth - w - pad, Math.max(pad, x + 12));
+  const top = Math.min(window.innerHeight - h - pad, Math.max(pad, y + 12));
+  tooltipEl.style.left = left + 'px';
+  tooltipEl.style.top = top + 'px';
+}
+
+function hideTooltip() {
+  if (!tooltipEl) return;
+  if (tooltipPinned) return;
+  tooltipEl.style.display = 'none';
+}
+
+window.addEventListener('click', (e) => {
+  // click outside unpins tooltips on mobile
+  if (!tooltipEl) return;
+  if (tooltipPinned) {
+    tooltipPinned = false;
+    tooltipEl.style.display = 'none';
+  }
+});
+
 function phaseLabel() {
   if (state.phase === 'main') return 'MAIN';
   if (state.phase === 'combat-declare') return 'COMBAT: DECLARE';
@@ -174,7 +205,19 @@ function beginTurn(who) {
     }
 
     state.phase = 'combat-block';
-    log('Enemy attacks. Click an attacker to select it, then click one of your units to block. Click the same attacker again to unselect. Re-click the same block pair to remove a block.');
+    log('Enemy attacks. Select an attacker, then click one of your units to block. Click the same attacker again to unselect. Re-click the same block pair to remove a block.');
+
+    // auto-resolve (no blockers)
+    const anyBlockers = state.player.board.some(u => !u.summoningSick && !u.exhausted && u.currentHp > 0);
+    if (!anyBlockers) {
+      log('No blockers available. Combat resolves.');
+      state.phase = 'combat-resolve';
+      render();
+      resolveCombat();
+      endTurn();
+      return;
+    }
+
     render();
   }
 }
@@ -503,7 +546,18 @@ function renderCard(card, opts) {
       const chip = document.createElement('span');
       chip.className = 'kw';
       chip.textContent = kw;
-      chip.title = KEYWORD_HELP[kw] || kw;
+      const help = KEYWORD_HELP[kw] || kw;
+      chip.title = help; // desktop fallback
+      chip.dataset.help = help;
+      chip.addEventListener('mouseenter', (ev) => { tooltipPinned = false; showTooltip(help, ev.clientX, ev.clientY); });
+      chip.addEventListener('mousemove', (ev) => { if (!tooltipPinned) showTooltip(help, ev.clientX, ev.clientY); });
+      chip.addEventListener('mouseleave', () => hideTooltip());
+      chip.addEventListener('click', (ev) => {
+        // mobile/touch: pin tooltip on tap
+        ev.stopPropagation();
+        tooltipPinned = true;
+        showTooltip(help, ev.clientX || (window.innerWidth/2), ev.clientY || (window.innerHeight/2));
+      });
       k.appendChild(chip);
     }
 
