@@ -269,7 +269,8 @@ function playCard(owner, handIdx) {
     currentArmour: card.armour ?? 0,
     currentShield: card.shield ?? 0,
     summoningSick: !hasHaste,
-    exhausted: true,
+    // If it has Haste, it should be able to attack immediately.
+    exhausted: !hasHaste,
   });
 
   log(`${p.name} played ${card.name} (${formatCost(card.cost)}).`);
